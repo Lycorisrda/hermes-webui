@@ -2549,6 +2549,7 @@ body{background:#1a1a2e;color:#e8e8f0;font-family:-apple-system,BlinkMacSystemFo
   margin:0 auto 12px;box-shadow:0 2px 12px rgba(233,69,96,.3)}
 h1{font-size:18px;font-weight:600;margin-bottom:4px}
 .sub{font-size:12px;color:#8888aa;margin-bottom:24px}
+.login-mode{font-size:11px;color:#8888aa;margin:-12px 0 12px}
 input{width:100%;padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);
   background:rgba(255,255,255,.04);color:#e8e8f0;font-size:14px;outline:none;margin-bottom:14px;
   transition:border-color .15s}
@@ -2563,6 +2564,7 @@ button:hover{background:rgba(124,185,255,.25)}
   <div class="logo">{{BOT_NAME_INITIAL}}</div>
   <h1>{{BOT_NAME}}</h1>
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
+  <p class="login-mode">Sign in with password or passkey</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
     <input type="password" id="pw" placeholder="{{LOGIN_PLACEHOLDER}}" autofocus>
     <button type="submit">{{LOGIN_BTN}}</button>
@@ -3433,7 +3435,7 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/api/auth/status":
         from api.auth import is_auth_enabled, parse_cookie, verify_session
-        from api.passkeys import credential_count
+        from api.passkeys import credential_count, passkey_account
 
         logged_in = False
         if is_auth_enabled():
@@ -3445,6 +3447,7 @@ def handle_get(handler, parsed) -> bool:
             "logged_in": logged_in,
             "passkeys_enabled": passkey_count > 0,
             "passkey_count": passkey_count,
+            "passkey_user": passkey_account(),
         })
 
     if parsed.path in ("/manifest.json", "/manifest.webmanifest"):

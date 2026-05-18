@@ -5636,6 +5636,13 @@ async function loadSettingsPanel(){
     try{
       const authStatus=await api('/api/auth/status');
       _setSettingsAuthButtonsVisible(!!authStatus.auth_enabled);
+      const passkeyUser=$('settingsPasskeyUser');
+      if(passkeyUser){
+        const user=(authStatus.passkey_user||{});
+        const username=user.username||'admin';
+        const display=user.display_name&&user.display_name!==username?(' ('+user.display_name+')'):'';
+        passkeyUser.textContent='Bound to WebUI user: '+username+display;
+      }
       const passkeyStatus=$('settingsPasskeyStatus');
       if(passkeyStatus){
         const count=Number(authStatus.passkey_count||0);
@@ -6319,14 +6326,23 @@ function _passkeyCredentialForServer(cred){
 
 async function refreshPasskeyStatus(){
   const status=$('settingsPasskeyStatus');
-  if(!status) return;
+  const userEl=$('settingsPasskeyUser');
+  if(!status&&!userEl) return;
   try{
     const authStatus=await api('/api/auth/status');
     const count=Number(authStatus.passkey_count||0);
-    status.textContent=count===1?'1 passkey registered.':(count+' passkeys registered.');
-    if(count===0) status.textContent='No passkeys registered.';
+    if(userEl){
+      const user=(authStatus.passkey_user||{});
+      const username=user.username||'admin';
+      const display=user.display_name&&user.display_name!==username?(' ('+user.display_name+')'):'';
+      userEl.textContent='Bound to WebUI user: '+username+display;
+    }
+    if(status){
+      status.textContent=count===1?'1 passkey registered.':(count+' passkeys registered.');
+      if(count===0) status.textContent='No passkeys registered.';
+    }
   }catch(e){
-    status.textContent='Could not load passkey status.';
+    if(status) status.textContent='Could not load passkey status.';
   }
 }
 

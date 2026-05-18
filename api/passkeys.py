@@ -16,6 +16,7 @@ from api.config import STATE_DIR, load_settings
 
 _PASSKEYS_FILE = STATE_DIR / "passkeys.json"
 _CHALLENGE_TTL_SECONDS = 300
+_DEFAULT_USERNAME = "admin"
 _LOCK = threading.Lock()
 _CHALLENGES: dict[str, dict[str, Any]] = {}
 
@@ -64,12 +65,36 @@ def _load_webauthn():
     }
 
 
+def _default_display_name() -> str:
+    bot_name = str(load_settings().get("bot_name") or "Hermes").strip() or "Hermes"
+    return f"{bot_name} Admin"
+
+
 def _default_store() -> dict[str, Any]:
+    user_id = _b64e(secrets.token_bytes(32))
     return {
         "version": 1,
-        "user_id": _b64e(secrets.token_bytes(32)),
+        "user_id": user_id,
+        "username": _DEFAULT_USERNAME,
+        "display_name": _default_display_name(),
         "credentials": [],
     }
+
+
+def _normalize_store(data: dict[str, Any]) -> dict[str, Any]:
+    data.setdefault("version", 1)
+    data.setdefault("user_id", _b64e(secrets.token_bytes(32)))
+    data.setdefault("username", _DEFAULT_USERNAME)
+    data.setdefault("display_name", _default_display_name())
+    creds = data.get("credentials")
+    data["credentials"] = creds if isinstance(creds, list) else []
+    for cred in data["credentials"]:
+        if not isinstance(cred, dict):
+            continue
+        cred.setdefault("user_id", data["user_id"])
+        cred.setdefault("username", data["username"])
+        cred.setdefault("display_name", data["display_name"])
+    return data
 
 
 def _load_store() -> dict[str, Any]:
@@ -77,11 +102,7 @@ def _load_store() -> dict[str, Any]:
         if _PASSKEYS_FILE.exists():
             data = json.loads(_PASSKEYS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                data.setdefault("version", 1)
-                data.setdefault("user_id", _b64e(secrets.token_bytes(32)))
-                creds = data.get("credentials")
-                data["credentials"] = creds if isinstance(creds, list) else []
-                return data
+                return _normalize_store(data)
     except Exception:
         pass
     return _default_store()
@@ -110,6 +131,16 @@ def _credential_count_unlocked(store: dict[str, Any]) -> int:
 def credential_count() -> int:
     with _LOCK:
         return _credential_count_unlocked(_load_store())
+
+
+def passkey_account() -> dict[str, Any]:
+    with _LOCK:
+        store = _load_store()
+        return {
+            "user_id": str(store.get("user_id") or ""),
+            "username": str(store.get("username") or _DEFAULT_USERNAME),
+            "display_name": str(store.get("display_name") or _default_display_name()),
+        }
 
 
 def passkeys_available() -> bool:
@@ -185,12 +216,14 @@ def registration_options(handler) -> dict[str, Any]:
             if isinstance(c, dict) and c.get("id")
         ]
         user_id = _b64d(str(store.get("user_id") or ""))
+        username = str(store.get("username") or _DEFAULT_USERNAME)
+        display_name = str(store.get("display_name") or _default_display_name())
     options = webauthn["generate_registration_options"](
         rp_id=rp_id,
         rp_name=rp_name,
         user_id=user_id,
-        user_name="hermes",
-        user_display_name=rp_name,
+        user_name=username,
+        user_display_name=display_name,
         exclude_credentials=exclude,
         authenticator_selection=webauthn["AuthenticatorSelectionCriteria"](
             resident_key=webauthn["ResidentKeyRequirement"].PREFERRED,
@@ -231,6 +264,9 @@ def verify_registration(handler, credential: dict[str, Any], challenge_id: str, 
     }
     with _LOCK:
         store = _load_store()
+        record["user_id"] = str(store.get("user_id") or "")
+        record["username"] = str(store.get("username") or _DEFAULT_USERNAME)
+        record["display_name"] = str(store.get("display_name") or _default_display_name())
         creds = [c for c in store.get("credentials", []) if isinstance(c, dict) and c.get("id") != record["id"]]
         creds.append(record)
         store["credentials"] = creds
@@ -271,6 +307,7 @@ def verify_authentication(handler, credential: dict[str, Any], challenge_id: str
     credential_id = str(credential.get("id") or "")
     with _LOCK:
         store = _load_store()
+        store_user_id = str(store.get("user_id") or "")
         credentials = [
             c for c in store.get("credentials", [])
             if isinstance(c, dict) and c.get("id") and c.get("public_key")
@@ -278,6 +315,11 @@ def verify_authentication(handler, credential: dict[str, Any], challenge_id: str
         record = next((c for c in credentials if c.get("id") == credential_id), None)
     if not record:
         raise ValueError("Unknown passkey.")
+    if record.get("user_id") and str(record.get("user_id")) != store_user_id:
+        raise ValueError("Passkey is not registered for this WebUI user.")
+    user_handle = ((credential.get("response") or {}).get("userHandle") or "").strip()
+    if user_handle and user_handle != store_user_id:
+        raise ValueError("Passkey user does not match this WebUI user.")
     verification = webauthn["verify_authentication_response"](
         credential=credential,
         expected_challenge=challenge["challenge"],
@@ -291,6 +333,9 @@ def verify_authentication(handler, credential: dict[str, Any], challenge_id: str
         store = _load_store()
         for item in store.get("credentials", []):
             if isinstance(item, dict) and item.get("id") == credential_id:
+                item["user_id"] = str(store.get("user_id") or "")
+                item["username"] = str(store.get("username") or _DEFAULT_USERNAME)
+                item["display_name"] = str(store.get("display_name") or _default_display_name())
                 item["sign_count"] = int(verification.new_sign_count or 0)
                 item["last_used_at"] = int(time.time())
                 item["device_type"] = str(getattr(verification, "credential_device_type", item.get("device_type", "")) or "")
