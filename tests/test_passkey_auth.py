@@ -29,6 +29,17 @@ def test_passkey_registration_endpoints_remain_authenticated():
     assert "/api/auth/passkey/register/verify" not in auth
 
 
+def test_passkey_registration_endpoints_are_csrf_exempt_but_not_public():
+    auth = read("api/auth.py")
+    routes = read("api/routes.py")
+    for endpoint in (
+        "/api/auth/passkey/register/options",
+        "/api/auth/passkey/register/verify",
+    ):
+        assert endpoint not in auth
+        assert endpoint in routes
+
+
 def test_passkey_status_and_login_ui_are_wired():
     routes = read("api/routes.py")
     login_js = read("static/login.js")

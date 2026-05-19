@@ -6,6 +6,7 @@
 
 - Add optional WebAuthn passkey / FIDO YubiKey login for the existing WebUI auth gate, with authenticated registration from Settings and passwordless sign-in from `/login`.
 - Bind registered passkeys to the single WebUI user identity (`admin`) and surface that binding in Settings while keeping password login as the fallback sign-in option.
+- Keep authenticated passkey registration out of the CSRF token gate so YubiKey/passkey setup is not rejected after enabling auth or behind stricter reverse-proxy Origin headers.
 - Preserve one active chat per profile so switching profiles restores that profile's last conversation instead of starting a new blank chat.
 - Move profile switching to a persistent top-left titlebar chip so profile changes are available outside the composer footer.
 - Add an All profiles scope in the titlebar profile menu for viewing chats and projects from every profile without switching the active profile.

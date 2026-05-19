@@ -1326,6 +1326,8 @@ def _csrf_exempt_path(path: str) -> bool:
         "/api/auth/login",
         "/api/auth/passkey/login/options",
         "/api/auth/passkey/login/verify",
+        "/api/auth/passkey/register/options",
+        "/api/auth/passkey/register/verify",
         "/api/csp-report",
     }
 
