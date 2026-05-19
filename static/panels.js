@@ -3856,15 +3856,19 @@ function _positionComposerWsDropdown(){
 
 function _positionProfileDropdown(){
   const dd=$('profileDropdown');
-  const chip=$('profileChip');
-  const footer=document.querySelector('.composer-footer');
-  if(!dd||!chip||!footer)return;
+  const chip=window._profileDropdownAnchor||$('profileChip');
+  if(!dd||!chip)return;
   const chipRect=chip.getBoundingClientRect();
-  const footerRect=footer.getBoundingClientRect();
-  let left=chipRect.left-footerRect.left;
-  const maxLeft=Math.max(0, footer.clientWidth-dd.offsetWidth);
-  left=Math.max(0, Math.min(left, maxLeft));
+  const margin=8;
+  const width=dd.offsetWidth||260;
+  const height=dd.offsetHeight||260;
+  const maxLeft=Math.max(margin, window.innerWidth-width-margin);
+  const left=Math.max(margin, Math.min(chipRect.left, maxLeft));
+  const below=chipRect.bottom+6;
+  const above=chipRect.top-height-6;
+  const top=(below+height+margin<=window.innerHeight)?below:Math.max(margin, above);
   dd.style.left=`${left}px`;
+  dd.style.top=`${top}px`;
 }
 
 function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
@@ -4684,29 +4688,47 @@ function renderProfileDropdown(data) {
   dd.appendChild(mgmt);
 }
 
-function toggleProfileDropdown() {
+function _profileChips(){
+  return Array.from(document.querySelectorAll('[data-profile-chip]'));
+}
+
+function _setProfileChipLabel(name){
+  document.querySelectorAll('[data-profile-chip-label]').forEach(el=>{el.textContent=name||'default';});
+}
+
+function _setProfileChipActive(active){
+  _profileChips().forEach(chip=>chip.classList.toggle('active',!!active));
+}
+
+function _setProfileChipSwitching(switching){
+  _profileChips().forEach(chip=>{
+    chip.classList.toggle('switching',!!switching);
+    chip.disabled=!!switching;
+  });
+}
+
+function toggleProfileDropdown(anchorEl) {
   const dd = $('profileDropdown');
   if (!dd) return;
   if (dd.classList.contains('open')) { closeProfileDropdown(); return; }
+  window._profileDropdownAnchor=anchorEl||$('profileChip');
   closeWsDropdown(); // close workspace dropdown if open
   if(typeof closeModelDropdown==='function') closeModelDropdown();
   api('/api/profiles').then(data => {
     renderProfileDropdown(data);
     dd.classList.add('open');
     _positionProfileDropdown();
-    const chip=$('profileChip');
-    if(chip) chip.classList.add('active');
+    _setProfileChipActive(true);
   }).catch(e => { showToast(t('profiles_load_failed')); });
 }
 
 function closeProfileDropdown() {
   const dd = $('profileDropdown');
   if (dd) dd.classList.remove('open');
-  const chip=$('profileChip');
-  if(chip) chip.classList.remove('active');
+  _setProfileChipActive(false);
 }
 document.addEventListener('click', e => {
-  if (!e.target.closest('#profileChipWrap') && !e.target.closest('#profileDropdown')) closeProfileDropdown();
+  if (!e.target.closest('[data-profile-chip-wrap]') && !e.target.closest('#profileDropdown')) closeProfileDropdown();
 });
 window.addEventListener('resize',()=>{
   const dd=$('profileDropdown');
@@ -4721,12 +4743,10 @@ async function switchToProfile(name) {
   // ── Loading indicator ───────────────────────────────────────────────────
   // Show spinner on the profile chip immediately so the user gets visual
   // feedback while the async switch is in progress.
-  const _chip = $('profileChip');
-  const _chipLabel = $('profileChipLabel');
   const _prevProfileName = S.activeProfile || 'default';
-  if (_chip) { _chip.classList.add('switching'); _chip.disabled = true; }
+  _setProfileChipSwitching(true);
   // Optimistic name update — shows the target name right away
-  if (_chipLabel) _chipLabel.textContent = name;
+  _setProfileChipLabel(name);
 
   // Remember the current profile's active chat before changing the profile cookie.
   if (S.session && S.session.session_id && typeof rememberActiveSessionForProfile === 'function') {
@@ -4825,11 +4845,11 @@ async function switchToProfile(name) {
 
   } catch (e) {
     // Revert the optimistic name update on error
-    if (_chipLabel) _chipLabel.textContent = _prevProfileName;
+    _setProfileChipLabel(_prevProfileName);
     showToast(t('switch_failed') + e.message);
   } finally {
     // Always remove loading indicator regardless of success or failure
-    if (_chip) { _chip.classList.remove('switching'); _chip.disabled = false; }
+    _setProfileChipSwitching(false);
   }
 }
 
