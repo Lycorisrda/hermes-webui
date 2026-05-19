@@ -2,8 +2,8 @@
 Tests for profile-switch UX improvements — spinner indicator + parallelized fetches.
 
 Two changes:
-1. switchToProfile() shows a spinner on the profile chip during the async switch,
-   with an optimistic name update and error revert.
+1. switchToProfile() shows a spinner on every profile chip during the async
+   switch, with an optimistic name update and error revert.
 2. populateModelDropdown() and loadWorkspaceList() are now parallelized via Promise.all
    instead of sequential awaits.
 """
@@ -33,8 +33,13 @@ class TestProfileSwitchSpinner:
     def test_switching_class_added_on_start(self):
         """The switching CSS class must be added before any awaits."""
         fn = self._get_switch_fn()
-        assert "classList.add('switching')" in fn, (
-            "switchToProfile() does not add 'switching' CSS class to the chip."
+        start_idx = fn.find("_setProfileChipSwitching(true)")
+        first_await_idx = fn.find("await ")
+        assert start_idx != -1, (
+            "switchToProfile() does not mark profile chips as switching."
+        )
+        assert first_await_idx == -1 or start_idx < first_await_idx, (
+            "Profile chip switching state must be set before any await."
         )
 
     def test_switching_class_removed_in_finally(self):
@@ -42,15 +47,15 @@ class TestProfileSwitchSpinner:
         fn = self._get_switch_fn()
         finally_idx = fn.find("} finally {")
         assert finally_idx != -1, "switchToProfile() has no finally block."
-        assert "classList.remove('switching')" in fn[finally_idx:], (
-            "The finally block does not remove 'switching' class."
+        assert "_setProfileChipSwitching(false)" in fn[finally_idx:], (
+            "The finally block does not clear profile chip switching state."
         )
 
     def test_optimistic_name_set_before_api_call(self):
         """Chip label must be updated to new name before the API call."""
         fn = self._get_switch_fn()
         api_call_idx = fn.find("await api('/api/profile/switch'")
-        opt_name_idx = fn.find("_chipLabel.textContent = name")
+        opt_name_idx = fn.find("_setProfileChipLabel(name)")
         assert opt_name_idx != -1, "No optimistic name update found."
         assert opt_name_idx < api_call_idx, (
             "Optimistic name update must happen BEFORE the API call."
@@ -59,13 +64,16 @@ class TestProfileSwitchSpinner:
     def test_chip_disabled_during_switch(self):
         """Chip must be disabled to prevent double-clicks."""
         fn = self._get_switch_fn()
-        assert "_chip.disabled = true" in fn, (
-            "switchToProfile() does not disable the chip."
+        helper_idx = self.JS.find("function _setProfileChipSwitching(switching)")
+        assert helper_idx != -1, "_setProfileChipSwitching helper missing."
+        helper = self.JS[helper_idx: self.JS.find("\n}\n\nfunction toggleProfileDropdown", helper_idx) + 2]
+        assert "chip.disabled=!!switching" in helper, (
+            "Profile chip switching helper does not disable chips."
         )
         finally_idx = fn.find("} finally {")
         assert finally_idx != -1
-        assert "_chip.disabled = false" in fn[finally_idx:], (
-            "The finally block does not re-enable the chip."
+        assert "_setProfileChipSwitching(false)" in fn[finally_idx:], (
+            "The finally block does not re-enable profile chips."
         )
 
     def test_error_reverts_chip_label_to_previous_name(self):
@@ -130,16 +138,16 @@ class TestSpinnerCss:
     CSS = (REPO_ROOT / "static" / "style.css").read_text(encoding="utf-8")
 
     def test_switching_class_defined(self):
-        assert ".composer-profile-chip.switching" in self.CSS
+        assert ".titlebar-profile-chip.switching" in self.CSS
 
     def test_switching_class_has_cursor_wait(self):
-        idx = self.CSS.find(".composer-profile-chip.switching")
+        idx = self.CSS.find(".titlebar-profile-chip.switching")
         assert idx != -1
         block = self.CSS[idx: idx + 200]
         assert "cursor:wait" in block
 
     def test_switching_class_has_pointer_events_none(self):
-        idx = self.CSS.find(".composer-profile-chip.switching")
+        idx = self.CSS.find(".titlebar-profile-chip.switching")
         assert idx != -1
         block = self.CSS[idx: idx + 200]
         assert "pointer-events:none" in block

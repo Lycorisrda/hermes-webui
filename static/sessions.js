@@ -89,6 +89,7 @@ const SESSION_VIEWED_COUNTS_KEY = 'hermes-session-viewed-counts';
 const SESSION_COMPLETION_UNREAD_KEY = 'hermes-session-completion-unread';
 const SESSION_OBSERVED_STREAMING_KEY = 'hermes-session-observed-streaming';
 const PROFILE_ACTIVE_SESSIONS_KEY = 'hermes-profile-active-sessions';
+const PROFILE_SCOPE_KEY = 'hermes-profile-scope';
 let _sessionViewedCounts = null;
 let _sessionCompletionUnread = null;
 let _sessionObservedStreaming = null;
@@ -1437,7 +1438,30 @@ let _allProjects = [];  // cached project list
 // double-underscore prefixes provide.
 const NO_PROJECT_FILTER = '__none__';
 let _activeProject = null;  // project_id filter (null = show all, NO_PROJECT_FILTER = unassigned only)
-let _showAllProfiles = false;  // false = filter to active profile only
+let _showAllProfiles = (() => {
+  try { return localStorage.getItem(PROFILE_SCOPE_KEY) === 'all'; }
+  catch (_) { return false; }
+})();  // false = filter to active profile only
+
+function profileChipDisplayLabel(){
+  return _showAllProfiles ? 'All profiles' : (S.activeProfile || 'default');
+}
+
+function syncProfileChipLabel(){
+  document.querySelectorAll('[data-profile-chip-label], #profileChipLabel').forEach(el=>{
+    el.textContent=profileChipDisplayLabel();
+  });
+}
+
+function setProfileScopeAll(enabled, opts={}){
+  _showAllProfiles=!!enabled;
+  try{localStorage.setItem(PROFILE_SCOPE_KEY,_showAllProfiles?'all':'active');}catch(_){}
+  syncProfileChipLabel();
+  if(typeof refreshProfileScopedPanelForScopeChange==='function'){
+    try{refreshProfileScopedPanelForScopeChange();}catch(_){}
+  }
+  if(opts.refresh!==false) return renderSessionList();
+}
 let _otherProfileCount = 0;       // count of sessions from other profiles (server-reported)
 let _sessionActionMenu = null;
 let _sessionActionAnchor = null;
@@ -2821,13 +2845,13 @@ function renderSessionListFromCache(){
     const pfToggle=document.createElement('div');
     pfToggle.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.7;';
     pfToggle.textContent='Show '+otherProfileCount+' from other profiles';
-    pfToggle.onclick=()=>{_showAllProfiles=true;renderSessionList();};
+    pfToggle.onclick=()=>{setProfileScopeAll(true);};
     list.appendChild(pfToggle);
   } else if(_showAllProfiles){
     const pfToggle=document.createElement('div');
     pfToggle.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.7;';
     pfToggle.textContent='Show active profile only';
-    pfToggle.onclick=()=>{_showAllProfiles=false;renderSessionList();};
+    pfToggle.onclick=()=>{setProfileScopeAll(false);};
     list.appendChild(pfToggle);
   }
   // Show/hide archived toggle if there are archived sessions
@@ -3063,6 +3087,13 @@ function renderSessionListFromCache(){
         dot.title=proj.name;
         titleRow.appendChild(dot);
       }
+    }
+    if(_showAllProfiles&&s.profile){
+      const profileBadge=document.createElement('span');
+      profileBadge.className='session-profile-badge';
+      profileBadge.textContent=s.profile;
+      profileBadge.title='Profile: '+s.profile;
+      titleRow.appendChild(profileBadge);
     }
     const density=(window._sidebarDensity==='detailed'?'detailed':'compact');
     const showLineageMetadata=density==='detailed';

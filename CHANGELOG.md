@@ -5,7 +5,11 @@
 ### Added
 
 - Add optional WebAuthn passkey / FIDO YubiKey login for the existing WebUI auth gate, with authenticated registration from Settings and passwordless sign-in from `/login`.
+- Bind registered passkeys to the single WebUI user identity (`admin`) and surface that binding in Settings while keeping password login as the fallback sign-in option.
 - Preserve one active chat per profile so switching profiles restores that profile's last conversation instead of starting a new blank chat.
+- Move profile switching to a persistent top-left titlebar chip so profile changes are available outside the composer footer.
+- Add an All profiles scope in the titlebar profile menu for viewing chats and projects from every profile without switching the active profile.
+- Extend All profiles scope across the interface: Tasks can list and operate on jobs from every profile, Spaces can read all profile workspace lists, and profile-specific tabs now clearly label when they still edit the active profile.
 
 ## [v0.51.89] — 2026-05-18 — Release BM (stage-382 — 6-PR full sweep batch — runtime adapter approval/clarify seam + SOUL.md memory panel + #1855 resolve_model_provider fast-path + PWA sidebar spinner fix + /model active-provider preference + contributor contract docs index)
 

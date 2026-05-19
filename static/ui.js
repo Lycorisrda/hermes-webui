@@ -4575,8 +4575,8 @@ function syncTopbar(){
     }
     if(typeof syncAppTitlebar==='function') syncAppTitlebar();
     // Update profile chip even when no session is active (e.g. right after profile switch)
-    const _profileLabel=$('profileChipLabel');
-    if(_profileLabel) _profileLabel.textContent=S.activeProfile||'default';
+    if(typeof syncProfileChipLabel==='function') syncProfileChipLabel();
+    else {const _profileLabel=$('profileChipLabel');if(_profileLabel) _profileLabel.textContent=S.activeProfile||'default';}
     return;
   }
   const sessionTitle=S.session.title||t('untitled');
@@ -4674,8 +4674,8 @@ function syncTopbar(){
   if(typeof syncTerminalButton==='function') syncTerminalButton();
   // modelSelect already set above
   // Update profile chip label
-  const profileLabel=$('profileChipLabel');
-  if(profileLabel) profileLabel.textContent=S.activeProfile||'default';
+  if(typeof syncProfileChipLabel==='function') syncProfileChipLabel();
+  else {const profileLabel=$('profileChipLabel');if(profileLabel) profileLabel.textContent=S.activeProfile||'default';}
 }
 
 function msgContent(m){

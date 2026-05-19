@@ -41,6 +41,26 @@ const APP_TITLEBAR_KEYS = {
   profiles: 'tab_profiles', todos: 'tab_todos', insights: 'tab_insights', logs: 'tab_logs', settings: 'tab_settings',
 };
 
+function _allProfilesScopeEnabled(){
+  return !!(typeof _showAllProfiles !== 'undefined' && _showAllProfiles);
+}
+
+function _profileScopeQuery(){
+  return _allProfilesScopeEnabled() ? '?all_profiles=1' : '';
+}
+
+function _activeProfileLabel(){
+  return (typeof S !== 'undefined' && S && S.activeProfile) ? S.activeProfile : 'default';
+}
+
+function _profileScopeNotice(kind){
+  if (!_allProfilesScopeEnabled()) return '';
+  if (kind === 'all') {
+    return `<div class="profile-scope-notice">All profiles scope is active. Items are grouped by their owning profile.</div>`;
+  }
+  return `<div class="profile-scope-notice warn">All profiles scope is active, but this panel edits the active profile only: <strong>${esc(_activeProfileLabel())}</strong>.</div>`;
+}
+
 /**
  * Update the top app titlebar to reflect the current page or selected conversation.
  * On the chat panel, a selected session's title takes precedence over the page name.
@@ -171,6 +191,18 @@ function _beforePanelSwitch(nextPanel) {
   _pendingSettingsTargetPanel = null;
   _resetSettingsPanelState();
   return true;
+}
+
+async function refreshProfileScopedPanelForScopeChange(){
+  if (_currentPanel === 'tasks') return loadCrons();
+  if (_currentPanel === 'kanban') return loadKanban();
+  if (_currentPanel === 'skills') { _skillsData = null; return loadSkills(); }
+  if (_currentPanel === 'memory') return loadMemory(true);
+  if (_currentPanel === 'workspaces') return loadWorkspacesPanel();
+  if (_currentPanel === 'todos') return loadTodos();
+  if (_currentPanel === 'insights') return loadInsights();
+  if (_currentPanel === 'logs') return loadLogs();
+  if (_currentPanel === 'settings') return loadSettingsPanel();
 }
 
 function _consumeSettingsTargetPanel(fallback = 'chat') {
@@ -417,28 +449,31 @@ async function loadCrons(animate) {
   }
   try {
     await loadCronProfiles();
-    const data = await api('/api/crons');
+    const data = await api('/api/crons' + _profileScopeQuery());
     _cronList = data.jobs || [];
     if (!_cronList.length) {
-      box.innerHTML = `<div style="padding:16px;color:var(--muted);font-size:12px">${esc(t('cron_no_jobs'))}</div>`;
+      box.innerHTML = `${_profileScopeNotice('all')}<div style="padding:16px;color:var(--muted);font-size:12px">${esc(t('cron_no_jobs'))}</div>`;
       if (_cronMode !== 'create' && _cronMode !== 'edit') _clearCronDetail();
       return;
     }
-    box.innerHTML = '';
+    box.innerHTML = _profileScopeNotice('all');
     for (const job of _cronList) {
       const item = document.createElement('div');
       item.className = 'cron-item';
-      item.id = 'cron-' + job.id;
+      item.id = _cronDomId(job);
+      item.dataset.storeProfile = job.store_profile || '';
       const status = _cronStatusMeta(job);
       const isNewRun = _cronNewJobIds.has(String(job.id));
       const isAgentMode = !job.no_agent;
       const profileLabel = _cronProfileLabel(job.profile);
       const profileTitle = _cronProfileTitle(job.profile);
+      const storeBadge = job.store_profile ? `<span class="cron-profile-badge store" title="Stored in profile ${esc(job.store_profile)}">${esc(job.store_profile)}</span>` : '';
       item.innerHTML = `
         <div class="cron-header">
           ${isNewRun ? '<span class="cron-new-dot" title="New run"></span>' : ''}
           ${isAgentMode ? '<span class="cron-agent-badge" title="Agent mode">🤖</span>' : ''}
           <span class="cron-name" title="${esc(job.name)}">${esc(job.name)}</span>
+          ${storeBadge}
           <span class="cron-profile-badge" title="${esc(profileTitle)}">${esc(profileLabel)}</span>
           <span class="cron-status ${status.listClass}">${esc(status.label)}</span>
         </div>`;
@@ -448,7 +483,7 @@ async function loadCrons(animate) {
     }
     // Re-render current detail with fresh data if we have one and we're not in a form
     if (_currentCronDetail && _cronMode !== 'create' && _cronMode !== 'edit') {
-      const refreshed = _cronList.find(j => j.id === _currentCronDetail.id);
+      const refreshed = _cronList.find(j => j.id === _currentCronDetail.id && (j.store_profile || '') === (_currentCronDetail.store_profile || ''));
       if (refreshed) _renderCronDetail(refreshed);
       else _clearCronDetail();
     }
@@ -459,6 +494,22 @@ async function loadCrons(animate) {
       refreshBtn.disabled = false;
     }
   }
+}
+
+function _cronDomId(job){
+  const store = job && job.store_profile ? String(job.store_profile).replace(/[^a-zA-Z0-9_-]/g, '_') : '';
+  return 'cron-' + (job ? job.id : '') + (store ? '-' + store : '');
+}
+
+function _cronStoreQuery(job){
+  const profile = job && job.store_profile ? String(job.store_profile) : '';
+  return profile ? '&store_profile=' + encodeURIComponent(profile) : '';
+}
+
+function _cronRequestBody(jobId){
+  const body = {job_id: jobId};
+  if (_currentCronDetail && _currentCronDetail.store_profile) body.store_profile = _currentCronDetail.store_profile;
+  return body;
 }
 
 function _cronPanelExpandKey(jobId, suffix){
@@ -610,7 +661,7 @@ function _setCronHeaderButtons(mode, job) {
 
 async function _loadCronDetailRuns(jobId){
   try {
-    const data = await api(`/api/crons/history?job_id=${encodeURIComponent(jobId)}&limit=50`);
+    const data = await api(`/api/crons/history?job_id=${encodeURIComponent(jobId)}&limit=50${_cronStoreQuery(_currentCronDetail)}`);
     if (!_currentCronDetail || _currentCronDetail.id !== jobId) return;
     const card = $('cronDetailRuns');
     if (!card) return;
@@ -652,7 +703,7 @@ async function _loadRunContent(jobId, filename, runId){
   body.classList.toggle('expanded', _cronExpansionGet(_cronRunExpandKey(jobId, filename)));
   body.innerHTML = `<span style="opacity:.5">${esc(t('loading'))}</span>`;
   try {
-    const data = await api(`/api/crons/run?job_id=${encodeURIComponent(jobId)}&filename=${encodeURIComponent(filename)}`);
+    const data = await api(`/api/crons/run?job_id=${encodeURIComponent(jobId)}&filename=${encodeURIComponent(filename)}${_cronStoreQuery(_currentCronDetail)}`);
     if (data.error) {
       body.textContent = data.error;
       return;
@@ -687,10 +738,11 @@ async function _loadRunContent(jobId, filename, runId){
 }
 
 function openCronDetail(id, el){
-  const job = _cronList ? _cronList.find(j => j.id === id) : null;
+  const clickedStore = el && el.dataset ? (el.dataset.storeProfile || '') : '';
+  const job = _cronList ? (_cronList.find(j => j.id === id && (!clickedStore || String(j.store_profile || '') === clickedStore)) || _cronList.find(j => j.id === id)) : null;
   if (!job) return;
   document.querySelectorAll('.cron-item').forEach(e => e.classList.remove('active'));
-  const target = el || $('cron-' + id);
+  const target = el || $(_cronDomId(job));
   if (target) target.classList.add('active');
   // Remove new-run dot from this job since user is now viewing it
   _clearCronUnreadForJob(id);
@@ -771,7 +823,7 @@ async function deleteCurrentCron(){
   const _ok = await showConfirmDialog({title:t('cron_delete_confirm_title'),message:t('cron_delete_confirm_message'),confirmLabel:t('delete_title'),danger:true,focusCancel:true});
   if(!_ok) return;
   try {
-    await api('/api/crons/delete', {method:'POST', body: JSON.stringify({job_id: id})});
+    await api('/api/crons/delete', {method:'POST', body: JSON.stringify(_cronRequestBody(id))});
     showToast(t('cron_job_deleted'));
     _clearCronDetail();
     await loadCrons();
@@ -978,6 +1030,7 @@ async function saveCronForm(){
   try{
     if (_editingCronId) {
       const updates = {job_id: _editingCronId, schedule, profile: profile, toast_notifications: toastNotifications};
+      if (_cronPreFormDetail && _cronPreFormDetail.store_profile) updates.store_profile = _cronPreFormDetail.store_profile;
       if (!isNoAgent) updates.prompt = prompt;
       if (name) updates.name = name;
       await api('/api/crons/update', {method:'POST', body: JSON.stringify(updates)});
@@ -1050,7 +1103,7 @@ function _startCronWatch(jobId) {
   _cronWatchStart = Date.now();
   _cronWatchInterval = setInterval(async () => {
     try {
-      const data = await api(`/api/crons/status?job_id=${encodeURIComponent(jobId)}`);
+      const data = await api(`/api/crons/status?job_id=${encodeURIComponent(jobId)}${_cronStoreQuery(_currentCronDetail)}`);
       if (!data.running) {
         _stopCronWatch();
         if (_currentCronDetail && _currentCronDetail.id === jobId) {
@@ -1105,7 +1158,7 @@ function _formatElapsed(seconds) {
 
 function _checkCronWatchOnDetail(jobId) {
   // When opening a detail view, check if job is running
-  api(`/api/crons/status?job_id=${encodeURIComponent(jobId)}`).then(data => {
+  api(`/api/crons/status?job_id=${encodeURIComponent(jobId)}${_cronStoreQuery(_currentCronDetail)}`).then(data => {
     if (data.running && _currentCronDetail && _currentCronDetail.id === jobId) {
       _startCronWatch(jobId);
     }
@@ -1114,7 +1167,7 @@ function _checkCronWatchOnDetail(jobId) {
 
 async function cronRun(id) {
   try {
-    await api('/api/crons/run', {method:'POST', body: JSON.stringify({job_id: id})});
+    await api('/api/crons/run', {method:'POST', body: JSON.stringify(_cronRequestBody(id))});
     showToast(t('cron_job_triggered'));
     _startCronWatch(id);
   } catch(e) { showToast(t('failed_colon') + e.message, 4000); }
@@ -1122,7 +1175,7 @@ async function cronRun(id) {
 
 async function cronPause(id) {
   try {
-    await api('/api/crons/pause', {method:'POST', body: JSON.stringify({job_id: id})});
+    await api('/api/crons/pause', {method:'POST', body: JSON.stringify(_cronRequestBody(id))});
     showToast(t('cron_job_paused'));
     await loadCrons();
   } catch(e) { showToast(t('failed_colon') + e.message, 4000); }
@@ -1130,7 +1183,7 @@ async function cronPause(id) {
 
 async function cronResume(id) {
   try {
-    await api('/api/crons/resume', {method:'POST', body: JSON.stringify({job_id: id})});
+    await api('/api/crons/resume', {method:'POST', body: JSON.stringify(_cronRequestBody(id))});
     showToast(t('cron_job_resumed'));
     await loadCrons();
   } catch(e) { showToast(t('failed_colon') + e.message, 4000); }
@@ -1333,7 +1386,7 @@ function _kanbanRenderBoard(){
   const board = $('kanbanBoard');
   if (!board) return;
   if (!_kanbanBoard || !_kanbanBoard.columns) {
-    board.innerHTML = _kanbanEmptyBoardHtml();
+    board.innerHTML = _profileScopeNotice('active') + _kanbanEmptyBoardHtml();
     return;
   }
   const columns = _kanbanVisibleTasks();
@@ -1341,10 +1394,10 @@ function _kanbanRenderBoard(){
   if ($('kanbanSummary')) $('kanbanSummary').textContent = String(t('kanban_visible_tasks')).replace('{0}', total);
   _kanbanRenderSidebar(columns);
   if (total === 0) {
-    board.innerHTML = _kanbanEmptyBoardHtml();
+    board.innerHTML = _profileScopeNotice('active') + _kanbanEmptyBoardHtml();
     return;
   }
-  board.innerHTML = _kanbanLanesByProfile ? _kanbanRenderProfileLanes(columns) : columns.map(_kanbanRenderColumn).join('');
+  board.innerHTML = _profileScopeNotice('active') + (_kanbanLanesByProfile ? _kanbanRenderProfileLanes(columns) : columns.map(_kanbanRenderColumn).join(''));
 }
 
 function _kanbanCard(task, status){
@@ -2376,12 +2429,12 @@ function loadTodos() {
     }
   }
   if (!todos.length) {
-    panel.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:4px 0">${esc(t('todos_no_active'))}</div>`;
+    panel.innerHTML = `${_profileScopeNotice('active')}<div style="color:var(--muted);font-size:12px;padding:4px 0">${esc(t('todos_no_active'))}</div>`;
     return;
   }
   const statusIcon = {pending:li('square',14), in_progress:li('loader',14), completed:li('check',14), cancelled:li('x',14)};
   const statusColor = {pending:'var(--muted)', in_progress:'var(--blue)', completed:'rgba(100,200,100,.8)', cancelled:'rgba(200,100,100,.5)'};
-  panel.innerHTML = todos.map(t => `
+  panel.innerHTML = _profileScopeNotice('active') + todos.map(t => `
     <div style="display:flex;align-items:flex-start;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);">
       <span style="font-size:14px;display:inline-flex;align-items:center;flex-shrink:0;margin-top:1px;color:${statusColor[t.status]||'var(--muted)'}">${statusIcon[t.status]||li('square',14)}</span>
       <div style="flex:1;min-width:0">
@@ -2853,9 +2906,9 @@ function _renderLogs(data) {
     ? `<div class="logs-hint">${esc(displayLines.length + ' / ' + _lastLogsLines.length + ' ' + t('logs_filter_active'))}</div>`
     : '';
   if (!displayLines.length) {
-    box.innerHTML = `${hint}${truncated}${filterNote}<div class="logs-empty">${esc(t('logs_empty'))}</div>`;
+    box.innerHTML = `${_profileScopeNotice('active')}${hint}${truncated}${filterNote}<div class="logs-empty">${esc(t('logs_empty'))}</div>`;
   } else {
-    box.innerHTML = `${hint}${truncated}${filterNote}` + displayLines.map(line => {
+    box.innerHTML = `${_profileScopeNotice('active')}${hint}${truncated}${filterNote}` + displayLines.map(line => {
       const cls = _logLineSeverityClass(line);
       return `<div class="log-line ${cls}">${esc(line)}</div>`;
     }).join('');
@@ -3172,6 +3225,7 @@ function _renderInsights(d, box, wikiStatus) {
     </div>`;
 
   box.innerHTML = `
+    ${_profileScopeNotice('active')}
     ${_renderSystemHealthPanel()}
     ${_renderLlmWikiStatus(wikiStatus)}
     <div class="insights-grid">
@@ -3251,8 +3305,8 @@ function renderSkills(skills) {
     cats[cat].push(s);
   }
   const box = $('skillsList');
-  box.innerHTML = '';
-  if (!filtered.length) { box.innerHTML = `<div style="padding:12px;color:var(--muted);font-size:12px">${esc(t('skills_no_match'))}</div>`; return; }
+  box.innerHTML = _profileScopeNotice('active');
+  if (!filtered.length) { box.innerHTML = `${_profileScopeNotice('active')}<div style="padding:12px;color:var(--muted);font-size:12px">${esc(t('skills_no_match'))}</div>`; return; }
   for (const [cat, items] of Object.entries(cats).sort()) {
     const collapsed = _collapsedCats.has(cat);
     const sec = document.createElement('div');
@@ -3856,15 +3910,19 @@ function _positionComposerWsDropdown(){
 
 function _positionProfileDropdown(){
   const dd=$('profileDropdown');
-  const chip=$('profileChip');
-  const footer=document.querySelector('.composer-footer');
-  if(!dd||!chip||!footer)return;
+  const chip=window._profileDropdownAnchor||$('profileChip');
+  if(!dd||!chip)return;
   const chipRect=chip.getBoundingClientRect();
-  const footerRect=footer.getBoundingClientRect();
-  let left=chipRect.left-footerRect.left;
-  const maxLeft=Math.max(0, footer.clientWidth-dd.offsetWidth);
-  left=Math.max(0, Math.min(left, maxLeft));
+  const margin=8;
+  const width=dd.offsetWidth||260;
+  const height=dd.offsetHeight||260;
+  const maxLeft=Math.max(margin, window.innerWidth-width-margin);
+  const left=Math.max(margin, Math.min(chipRect.left, maxLeft));
+  const below=chipRect.bottom+6;
+  const above=chipRect.top-height-6;
+  const top=(below+height+margin<=window.innerHeight)?below:Math.max(margin, above);
   dd.style.left=`${left}px`;
+  dd.style.top=`${top}px`;
 }
 
 function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
@@ -4023,26 +4081,34 @@ window.addEventListener('resize',()=>{
 async function loadWorkspacesPanel(){
   const panel=$('workspacesPanel');
   if(!panel)return;
+  if (_allProfilesScopeEnabled()) {
+    const data = await api('/api/workspaces' + _profileScopeQuery());
+    renderWorkspacesPanel(data.workspaces || [], {allProfiles:true});
+    return;
+  }
   const data=await loadWorkspaceList();
-  renderWorkspacesPanel(data.workspaces);
+  renderWorkspacesPanel(data.workspaces, {allProfiles:false});
 }
 
-function renderWorkspacesPanel(workspaces){
+function renderWorkspacesPanel(workspaces, opts){
+  const allProfiles = !!(opts && opts.allProfiles);
   const panel=$('workspacesPanel');
-  panel.innerHTML='';
+  _workspaceList = Array.isArray(workspaces) ? workspaces : [];
+  panel.innerHTML=_profileScopeNotice(allProfiles ? 'all' : 'active');
   const activePath = S.session ? S.session.workspace : '';
   for(let i=0;i<workspaces.length;i++){
     const w=workspaces[i];
     const row=document.createElement('div');
     row.className='ws-row';
     row.dataset.path = w.path;
-    row.draggable=true;
+    row.draggable=!allProfiles;
     const isActive = w.path === activePath;
     const activeBadge = isActive ? `<span class="detail-badge active" style="margin-left:6px;font-size:9px;padding:1px 6px">${esc(t('profile_active'))}</span>` : '';
+    const profileBadge = allProfiles && w.profile ? `<span class="detail-badge" style="margin-left:6px;font-size:9px;padding:1px 6px">${esc(w.profile)}</span>` : '';
     row.innerHTML=`
       <span class="ws-drag-handle" title="${esc(t('workspace_drag_hint'))}">${li('grip-vertical',12)}</span>
       <div class="ws-row-info">
-        <div class="ws-row-name">${esc(w.name)}${activeBadge}</div>
+        <div class="ws-row-name">${esc(w.name)}${activeBadge}${profileBadge}</div>
         <div class="ws-row-path">${esc(w.path)}</div>
       </div>`;
     // Click on info area only — not on drag handle
@@ -4052,6 +4118,7 @@ function renderWorkspacesPanel(workspaces){
 
     // ── Drag-and-drop reorder ──
     row.addEventListener('dragstart', (e) => {
+      if (allProfiles) { e.preventDefault(); return; }
       // Only allow drag from the grip handle or the row itself
       row.classList.add('dragging');
       e.dataTransfer.effectAllowed='move';
@@ -4064,6 +4131,7 @@ function renderWorkspacesPanel(workspaces){
       panel.querySelectorAll('.ws-row.drag-over').forEach(r => r.classList.remove('drag-over'));
     });
     row.addEventListener('dragover', (e) => {
+      if (allProfiles) return;
       e.preventDefault();
       e.dataTransfer.dropEffect='move';
       // Highlight drop target
@@ -4075,6 +4143,7 @@ function renderWorkspacesPanel(workspaces){
     });
     row.addEventListener('drop', async (e) => {
       e.preventDefault();
+      if (allProfiles) return;
       row.classList.remove('drag-over');
       const fromPath = e.dataTransfer.getData('text/plain');
       const toPath = w.path;
@@ -4129,12 +4198,14 @@ function _renderWorkspaceDetail(ws){
     ? `<span class="detail-badge active">${esc(t('profile_active'))}</span>`
     : `<span class="detail-badge">Inactive</span>`;
   const defaultBadge = isDefault ? ` <span class="detail-badge">${esc(t('profile_default_label'))}</span>` : '';
+  const profileRow = ws.profile ? `<div class="detail-row"><div class="detail-row-label">Profile</div><div class="detail-row-value"><span class="detail-badge">${esc(ws.profile)}</span></div></div>` : '';
   body.innerHTML = `
     <div class="main-view-content">
       <div class="detail-card">
         <div class="detail-card-title">Space</div>
         <div class="detail-row"><div class="detail-row-label">Name</div><div class="detail-row-value">${esc(ws.name || '')}</div></div>
         <div class="detail-row"><div class="detail-row-label">Path</div><div class="detail-row-value"><code>${esc(ws.path)}</code></div></div>
+        ${profileRow}
         <div class="detail-row"><div class="detail-row-label">Status</div><div class="detail-row-value">${statusBadge}${defaultBadge}</div></div>
       </div>
       <div class="detail-card" style="margin-top:12px">
@@ -4160,6 +4231,10 @@ function _setWorkspaceHeaderButtons(mode, ws){
   const show = b => b && (b.style.display = '');
   const hide = b => b && (b.style.display = 'none');
   if (mode === 'read') {
+    if (_allProfilesScopeEnabled()) {
+      hide(actBtn); hide(editBtn); hide(delBtn); hide(cancelBtn); hide(saveBtn);
+      return;
+    }
     const activePath = S.session ? S.session.workspace : '';
     const isActive = ws && ws.path === activePath;
     const isDefault = !!(ws && ws.is_default);
@@ -4658,19 +4733,33 @@ function renderProfileDropdown(data) {
   const active = (S.activeProfile && profiles.some(p => p.name === S.activeProfile))
     ? S.activeProfile
     : (data.active || 'default');
+  const allOpt=document.createElement('div');
+  allOpt.className='profile-opt'+(_showAllProfiles?' active':'');
+  allOpt.innerHTML=`<div class="profile-opt-name">${li('layers',12)} ${esc('All profiles')}${_showAllProfiles?' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--link)" stroke-width="3" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>':''}</div>`+
+    `<div class="profile-opt-meta">${esc('Show chats and projects from every profile')}</div>`;
+  allOpt.onclick=()=>{
+    closeProfileDropdown();
+    if(typeof setProfileScopeAll==='function') setProfileScopeAll(true);
+  };
+  dd.appendChild(allOpt);
+  dd.appendChild(document.createElement('div')).className='ws-divider';
   for (const p of profiles) {
     const opt = document.createElement('div');
-    opt.className = 'profile-opt' + (p.name === active ? ' active' : '');
+    opt.className = 'profile-opt' + (!_showAllProfiles && p.name === active ? ' active' : '');
     const meta = [];
     if (p.model) meta.push(p.model.split('/').pop());
     if (p.skill_count) meta.push(t('profile_skill_count', p.skill_count));
     const gwDot = `<span class="profile-opt-badge ${p.gateway_running ? 'running' : 'stopped'}"></span>`;
-    const checkmark = p.name === active ? ' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--link)" stroke-width="3" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+    const checkmark = !_showAllProfiles && p.name === active ? ' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--link)" stroke-width="3" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>' : '';
     const defaultBadge = p.is_default ? ` <span style="opacity:.5;font-weight:400">${esc(t('profile_default_label'))}</span>` : '';
     opt.innerHTML = `<div class="profile-opt-name">${gwDot}${esc(p.name)}${defaultBadge}${checkmark}</div>` +
       (meta.length ? `<div class="profile-opt-meta">${esc(meta.join(' \u00b7 '))}</div>` : '');
     opt.onclick = async () => {
       closeProfileDropdown();
+      if (_showAllProfiles && p.name === active) {
+        if(typeof setProfileScopeAll==='function') await setProfileScopeAll(false);
+        return;
+      }
       if (p.name === active) return;
       await switchToProfile(p.name);
     };
@@ -4684,29 +4773,48 @@ function renderProfileDropdown(data) {
   dd.appendChild(mgmt);
 }
 
-function toggleProfileDropdown() {
+function _profileChips(){
+  return Array.from(document.querySelectorAll('[data-profile-chip]'));
+}
+
+function _setProfileChipLabel(name){
+  const label=(typeof profileChipDisplayLabel==='function'&&!name)?profileChipDisplayLabel():(name||'default');
+  document.querySelectorAll('[data-profile-chip-label], #profileChipLabel').forEach(el=>{el.textContent=label;});
+}
+
+function _setProfileChipActive(active){
+  _profileChips().forEach(chip=>chip.classList.toggle('active',!!active));
+}
+
+function _setProfileChipSwitching(switching){
+  _profileChips().forEach(chip=>{
+    chip.classList.toggle('switching',!!switching);
+    chip.disabled=!!switching;
+  });
+}
+
+function toggleProfileDropdown(anchorEl) {
   const dd = $('profileDropdown');
   if (!dd) return;
   if (dd.classList.contains('open')) { closeProfileDropdown(); return; }
+  window._profileDropdownAnchor=anchorEl||$('profileChip');
   closeWsDropdown(); // close workspace dropdown if open
   if(typeof closeModelDropdown==='function') closeModelDropdown();
   api('/api/profiles').then(data => {
     renderProfileDropdown(data);
     dd.classList.add('open');
     _positionProfileDropdown();
-    const chip=$('profileChip');
-    if(chip) chip.classList.add('active');
+    _setProfileChipActive(true);
   }).catch(e => { showToast(t('profiles_load_failed')); });
 }
 
 function closeProfileDropdown() {
   const dd = $('profileDropdown');
   if (dd) dd.classList.remove('open');
-  const chip=$('profileChip');
-  if(chip) chip.classList.remove('active');
+  _setProfileChipActive(false);
 }
 document.addEventListener('click', e => {
-  if (!e.target.closest('#profileChipWrap') && !e.target.closest('#profileDropdown')) closeProfileDropdown();
+  if (!e.target.closest('[data-profile-chip-wrap]') && !e.target.closest('#profileDropdown')) closeProfileDropdown();
 });
 window.addEventListener('resize',()=>{
   const dd=$('profileDropdown');
@@ -4721,12 +4829,11 @@ async function switchToProfile(name) {
   // ── Loading indicator ───────────────────────────────────────────────────
   // Show spinner on the profile chip immediately so the user gets visual
   // feedback while the async switch is in progress.
-  const _chip = $('profileChip');
-  const _chipLabel = $('profileChipLabel');
   const _prevProfileName = S.activeProfile || 'default';
-  if (_chip) { _chip.classList.add('switching'); _chip.disabled = true; }
+  if(typeof setProfileScopeAll==='function') setProfileScopeAll(false,{refresh:false});
+  _setProfileChipSwitching(true);
   // Optimistic name update — shows the target name right away
-  if (_chipLabel) _chipLabel.textContent = name;
+  _setProfileChipLabel(name);
 
   // Remember the current profile's active chat before changing the profile cookie.
   if (S.session && S.session.session_id && typeof rememberActiveSessionForProfile === 'function') {
@@ -4790,8 +4897,6 @@ async function switchToProfile(name) {
     }
 
     // ── Session ────────────────────────────────────────────────────────────
-    _showAllProfiles = false;
-
     S.session=null;
     S.messages=[];
     S.toolCalls=[];
@@ -4825,11 +4930,11 @@ async function switchToProfile(name) {
 
   } catch (e) {
     // Revert the optimistic name update on error
-    if (_chipLabel) _chipLabel.textContent = _prevProfileName;
+    _setProfileChipLabel(_prevProfileName);
     showToast(t('switch_failed') + e.message);
   } finally {
     // Always remove loading indicator regardless of success or failure
-    if (_chip) { _chip.classList.remove('switching'); _chip.disabled = false; }
+    _setProfileChipSwitching(false);
   }
 }
 
@@ -4985,7 +5090,7 @@ async function loadMemory(force) {
     const data = await api('/api/memory');
     _memoryData = data;
     if (panel) {
-      panel.innerHTML = '';
+      panel.innerHTML = _profileScopeNotice('active');
       for (const s of MEMORY_SECTIONS) {
         const el = document.createElement('button');
         el.type = 'button';
@@ -5361,6 +5466,17 @@ function _retryPreferencesAutosave(){
 
 async function loadSettingsPanel(){
   try{
+    const settingsMenu = $('settingsMenu');
+    if (settingsMenu) {
+      const oldNotice = $('settingsProfileScopeNotice');
+      if (oldNotice) oldNotice.remove();
+      if (_allProfilesScopeEnabled()) {
+        const notice = document.createElement('div');
+        notice.id = 'settingsProfileScopeNotice';
+        notice.innerHTML = _profileScopeNotice('active');
+        settingsMenu.insertBefore(notice, settingsMenu.firstChild);
+      }
+    }
     const settings=await api('/api/settings');
     // Populate the version badges from the server — keeps them in sync with git
     // tags automatically without any manual release step.
@@ -5636,6 +5752,13 @@ async function loadSettingsPanel(){
     try{
       const authStatus=await api('/api/auth/status');
       _setSettingsAuthButtonsVisible(!!authStatus.auth_enabled);
+      const passkeyUser=$('settingsPasskeyUser');
+      if(passkeyUser){
+        const user=(authStatus.passkey_user||{});
+        const username=user.username||'admin';
+        const display=user.display_name&&user.display_name!==username?(' ('+user.display_name+')'):'';
+        passkeyUser.textContent='Bound to WebUI user: '+username+display;
+      }
       const passkeyStatus=$('settingsPasskeyStatus');
       if(passkeyStatus){
         const count=Number(authStatus.passkey_count||0);
@@ -6319,14 +6442,23 @@ function _passkeyCredentialForServer(cred){
 
 async function refreshPasskeyStatus(){
   const status=$('settingsPasskeyStatus');
-  if(!status) return;
+  const userEl=$('settingsPasskeyUser');
+  if(!status&&!userEl) return;
   try{
     const authStatus=await api('/api/auth/status');
     const count=Number(authStatus.passkey_count||0);
-    status.textContent=count===1?'1 passkey registered.':(count+' passkeys registered.');
-    if(count===0) status.textContent='No passkeys registered.';
+    if(userEl){
+      const user=(authStatus.passkey_user||{});
+      const username=user.username||'admin';
+      const display=user.display_name&&user.display_name!==username?(' ('+user.display_name+')'):'';
+      userEl.textContent='Bound to WebUI user: '+username+display;
+    }
+    if(status){
+      status.textContent=count===1?'1 passkey registered.':(count+' passkeys registered.');
+      if(count===0) status.textContent='No passkeys registered.';
+    }
   }catch(e){
-    status.textContent='Could not load passkey status.';
+    if(status) status.textContent='Could not load passkey status.';
   }
 }
 

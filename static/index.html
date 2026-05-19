@@ -119,6 +119,13 @@
   <button class="app-titlebar-hamburger has-tooltip has-tooltip--bottom" id="btnHamburger" onclick="toggleMobileSidebar()" type="button" data-tooltip="Menu" aria-label="Menu">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
   </button>
+  <div id="profileChipWrap" class="titlebar-profile-wrap" data-profile-chip-wrap>
+    <button class="titlebar-profile-chip profile-chip" id="profileChip" type="button" onclick="toggleProfileDropdown(this)" title="Switch profile" data-profile-chip>
+      <span class="titlebar-profile-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+      <span class="titlebar-profile-label" id="profileChipLabel" data-profile-chip-label>default</span>
+      <span class="titlebar-profile-chevron" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </button>
+  </div>
   <div class="app-titlebar-inner">
     <span class="app-titlebar-icon" aria-hidden="true">
       <svg viewBox="0 0 64 64" width="16" height="16" aria-hidden="true">
@@ -570,13 +577,6 @@
               <span class="yolo-pill-icon" aria-hidden="true">⚡</span>
               <span class="yolo-pill-label" data-i18n="yolo_pill_label">YOLO</span>
             </button>
-            <div id="profileChipWrap" class="composer-profile-wrap">
-              <button class="composer-profile-chip profile-chip" id="profileChip" type="button" onclick="toggleProfileDropdown()" title="Switch profile">
-                <span class="composer-profile-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
-                <span class="composer-profile-label" id="profileChipLabel">default</span>
-                <span class="composer-profile-chevron" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
-              </button>
-            </div>
             <div class="composer-ws-wrap">
               <div class="composer-workspace-group ws-chip" id="composerWorkspaceGroup" role="group" aria-label="Workspace controls">
                 <button class="composer-workspace-files-btn" id="btnWorkspacePanelToggle" type="button" onclick="toggleWorkspacePanel()" title="Show workspace panel" aria-pressed="false" aria-label="Toggle workspace files panel">
@@ -1209,6 +1209,7 @@
             <button class="sm-btn" id="btnSignOut" onclick="signOut()" style="margin-top:6px;width:100%;padding:8px;font-weight:600;color:var(--accent);border-color:rgba(233,69,96,.3);display:none" data-i18n="sign_out">Sign Out</button>
             <div class="settings-field" id="settingsPasskeyBlock" style="display:none;margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
               <label>Passkeys / YubiKey</label>
+              <div id="settingsPasskeyUser" style="font-size:11px;color:var(--muted);margin-bottom:4px">Bound to WebUI user: admin</div>
               <div id="settingsPasskeyStatus" style="font-size:11px;color:var(--muted);margin-bottom:8px">No passkeys registered.</div>
               <button class="sm-btn" id="btnRegisterPasskey" onclick="registerPasskey()" style="width:100%;padding:8px;font-weight:600;color:var(--accent);border-color:rgba(233,69,96,.3)">Add passkey or YubiKey</button>
             </div>

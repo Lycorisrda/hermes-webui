@@ -1509,8 +1509,8 @@ function applyBotName(){
   // Fetch active profile
   try{const p=await api('/api/profile/active');S.activeProfile=p.name||'default';}catch(e){S.activeProfile='default';}
   // Update profile chip label immediately
-  const profileLabel=$('profileChipLabel');
-  if(profileLabel) profileLabel.textContent=S.activeProfile||'default';
+  if(typeof syncProfileChipLabel==='function') syncProfileChipLabel();
+  else {const profileLabel=$('profileChipLabel');if(profileLabel) profileLabel.textContent=S.activeProfile||'default';}
   // Fetch available models without blocking session restore. The static HTML
   // options are enough for first paint; the dynamic provider list can settle
   // after the saved session is visible.

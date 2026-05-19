@@ -21,7 +21,7 @@ import time
 import uuid
 import re
 from pathlib import Path
-from contextlib import closing
+from contextlib import closing, contextmanager
 from urllib.parse import parse_qs
 from api.agent_sessions import (
     MESSAGING_SOURCES,
@@ -590,6 +590,84 @@ def _cron_job_for_api(job: dict) -> dict:
 
 def _cron_jobs_for_api(jobs) -> list[dict]:
     return [_cron_job_for_api(job) for job in (jobs or [])]
+
+
+@contextmanager
+def _request_profile_context(name: str):
+    """Temporarily pin profile-aware helpers to a specific profile."""
+    from api.profiles import get_active_profile_name, set_request_profile
+
+    previous = get_active_profile_name()
+    set_request_profile(name or "default")
+    try:
+        yield
+    finally:
+        set_request_profile(previous or "default")
+
+
+def _all_profile_workspaces_for_api() -> dict:
+    from api.profiles import get_active_profile_name, list_profiles_api
+
+    active_profile = get_active_profile_name() or "default"
+    rows = []
+    seen = set()
+    for profile in list_profiles_api():
+        name = str((profile or {}).get("name") or "default")
+        with _request_profile_context(name):
+            for workspace in load_workspaces():
+                item = dict(workspace or {})
+                item["profile"] = name
+                key = (name, item.get("path"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(item)
+    return {
+        "workspaces": rows,
+        "last": get_last_workspace(),
+        "all_profiles": True,
+        "active_profile": active_profile,
+    }
+
+
+def _all_profile_cron_jobs_for_api() -> dict:
+    from cron.jobs import list_jobs
+    from api.profiles import (
+        cron_profile_context_for_home,
+        get_active_profile_name,
+        get_hermes_home_for_profile,
+        list_profiles_api,
+    )
+
+    active_profile = get_active_profile_name() or "default"
+    jobs = []
+    for profile in list_profiles_api():
+        name = str((profile or {}).get("name") or "default")
+        try:
+            with cron_profile_context_for_home(get_hermes_home_for_profile(name)):
+                for job in _cron_jobs_for_api(list_jobs(include_disabled=True)):
+                    job["store_profile"] = name
+                    jobs.append(job)
+        except Exception:
+            logger.debug("Failed to load cron jobs for profile %s", name, exc_info=True)
+    return {"jobs": jobs, "all_profiles": True, "active_profile": active_profile}
+
+
+@contextmanager
+def _cron_store_context_from_request(parsed=None, body=None):
+    from api.profiles import cron_profile_context, cron_profile_context_for_home, get_hermes_home_for_profile
+
+    store_profile = ""
+    if isinstance(body, dict):
+        store_profile = str(body.get("store_profile") or "").strip()
+    if not store_profile and parsed is not None:
+        store_profile = str(parse_qs(parsed.query).get("store_profile", [""])[0] or "").strip()
+    if store_profile:
+        with cron_profile_context_for_home(get_hermes_home_for_profile(store_profile)):
+            yield
+    else:
+        with cron_profile_context():
+            yield
 
 
 def _available_cron_profile_names() -> set[str]:
@@ -2549,6 +2627,7 @@ body{background:#1a1a2e;color:#e8e8f0;font-family:-apple-system,BlinkMacSystemFo
   margin:0 auto 12px;box-shadow:0 2px 12px rgba(233,69,96,.3)}
 h1{font-size:18px;font-weight:600;margin-bottom:4px}
 .sub{font-size:12px;color:#8888aa;margin-bottom:24px}
+.login-mode{font-size:11px;color:#8888aa;margin:-12px 0 12px}
 input{width:100%;padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);
   background:rgba(255,255,255,.04);color:#e8e8f0;font-size:14px;outline:none;margin-bottom:14px;
   transition:border-color .15s}
@@ -2563,6 +2642,7 @@ button:hover{background:rgba(124,185,255,.25)}
   <div class="logo">{{BOT_NAME_INITIAL}}</div>
   <h1>{{BOT_NAME}}</h1>
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
+  <p class="login-mode">Sign in with password or passkey</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
     <input type="password" id="pw" placeholder="{{LOGIN_PLACEHOLDER}}" autofocus>
     <button type="submit">{{LOGIN_BTN}}</button>
@@ -3433,7 +3513,7 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/api/auth/status":
         from api.auth import is_auth_enabled, parse_cookie, verify_session
-        from api.passkeys import credential_count
+        from api.passkeys import credential_count, passkey_account
 
         logged_in = False
         if is_auth_enabled():
@@ -3445,6 +3525,7 @@ def handle_get(handler, parsed) -> bool:
             "logged_in": logged_in,
             "passkeys_enabled": passkey_count > 0,
             "passkey_count": passkey_count,
+            "passkey_user": passkey_account(),
         })
 
     if parsed.path in ("/manifest.json", "/manifest.webmanifest"):
@@ -4004,8 +4085,10 @@ def handle_get(handler, parsed) -> bool:
         return _handle_session_export(handler, parsed)
 
     if parsed.path == "/api/workspaces":
+        if _all_profiles_query_flag(parsed):
+            return j(handler, _all_profile_workspaces_for_api())
         return j(
-            handler, {"workspaces": load_workspaces(), "last": get_last_workspace()}
+            handler, {"workspaces": load_workspaces(), "last": get_last_workspace(), "all_profiles": False}
         )
 
     if parsed.path == "/api/workspaces/suggest":
@@ -4194,37 +4277,29 @@ def handle_get(handler, parsed) -> bool:
         from cron.jobs import list_jobs
         from api.profiles import cron_profile_context
 
+        if _all_profiles_query_flag(parsed):
+            return j(handler, _all_profile_cron_jobs_for_api())
         with cron_profile_context():
-            return j(handler, {"jobs": _cron_jobs_for_api(list_jobs(include_disabled=True))})
+            return j(handler, {"jobs": _cron_jobs_for_api(list_jobs(include_disabled=True)), "all_profiles": False})
 
     if parsed.path == "/api/crons/output":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(parsed=parsed):
             return _handle_cron_output(handler, parsed)
 
     if parsed.path == "/api/crons/history":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(parsed=parsed):
             return _handle_cron_history(handler, parsed)
 
     if parsed.path == "/api/crons/run":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(parsed=parsed):
             return _handle_cron_run_detail(handler, parsed)
 
     if parsed.path == "/api/crons/recent":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(parsed=parsed):
             return _handle_cron_recent(handler, parsed)
 
     if parsed.path == "/api/crons/status":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(parsed=parsed):
             return _handle_cron_status(handler, parsed)
 
     # ── Skills API (GET) ──
@@ -5161,33 +5236,23 @@ def handle_post(handler, parsed) -> bool:
             return _handle_cron_create(handler, body)
 
     if parsed.path == "/api/crons/update":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(body=body):
             return _handle_cron_update(handler, body)
 
     if parsed.path == "/api/crons/delete":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(body=body):
             return _handle_cron_delete(handler, body)
 
     if parsed.path == "/api/crons/run":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(body=body):
             return _handle_cron_run(handler, body)
 
     if parsed.path == "/api/crons/pause":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(body=body):
             return _handle_cron_pause(handler, body)
 
     if parsed.path == "/api/crons/resume":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
+        with _cron_store_context_from_request(body=body):
             return _handle_cron_resume(handler, body)
 
     # ── File ops (POST) ──
