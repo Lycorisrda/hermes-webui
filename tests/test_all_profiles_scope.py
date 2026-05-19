@@ -16,6 +16,7 @@ def test_all_profiles_scope_is_persistent_and_fetches_aggregate_lists():
     assert "_showAllProfiles ? '?all_profiles=1' : ''" in sessions_js
     assert "api('/api/sessions' + allProfilesQS)" in sessions_js
     assert "api('/api/projects' + allProfilesQS)" in sessions_js
+    assert "refreshProfileScopedPanelForScopeChange()" in sessions_js
 
 
 def test_titlebar_profile_menu_has_all_profiles_without_profile_switch():
@@ -41,3 +42,18 @@ def test_sync_topbar_preserves_all_profiles_chip_label():
     boot_js = read("static/boot.js")
     assert "syncProfileChipLabel()" in ui_js
     assert "syncProfileChipLabel()" in boot_js
+
+
+def test_profile_scope_reaches_other_interface_tabs():
+    panels_js = read("static/panels.js")
+    routes_py = read("api/routes.py")
+    style_css = read("static/style.css")
+    assert "function _profileScopeNotice" in panels_js
+    assert "async function refreshProfileScopedPanelForScopeChange" in panels_js
+    assert "api('/api/crons' + _profileScopeQuery())" in panels_js
+    assert "api('/api/workspaces' + _profileScopeQuery())" in panels_js
+    assert "store_profile" in panels_js
+    assert "_all_profile_cron_jobs_for_api" in routes_py
+    assert "_all_profile_workspaces_for_api" in routes_py
+    assert "_cron_store_context_from_request" in routes_py
+    assert ".profile-scope-notice" in style_css

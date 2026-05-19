@@ -1457,6 +1457,9 @@ function setProfileScopeAll(enabled, opts={}){
   _showAllProfiles=!!enabled;
   try{localStorage.setItem(PROFILE_SCOPE_KEY,_showAllProfiles?'all':'active');}catch(_){}
   syncProfileChipLabel();
+  if(typeof refreshProfileScopedPanelForScopeChange==='function'){
+    try{refreshProfileScopedPanelForScopeChange();}catch(_){}
+  }
   if(opts.refresh!==false) return renderSessionList();
 }
 let _otherProfileCount = 0;       // count of sessions from other profiles (server-reported)
