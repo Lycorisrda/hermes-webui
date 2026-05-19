@@ -4662,19 +4662,33 @@ function renderProfileDropdown(data) {
   const active = (S.activeProfile && profiles.some(p => p.name === S.activeProfile))
     ? S.activeProfile
     : (data.active || 'default');
+  const allOpt=document.createElement('div');
+  allOpt.className='profile-opt'+(_showAllProfiles?' active':'');
+  allOpt.innerHTML=`<div class="profile-opt-name">${li('layers',12)} ${esc('All profiles')}${_showAllProfiles?' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--link)" stroke-width="3" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>':''}</div>`+
+    `<div class="profile-opt-meta">${esc('Show chats and projects from every profile')}</div>`;
+  allOpt.onclick=()=>{
+    closeProfileDropdown();
+    if(typeof setProfileScopeAll==='function') setProfileScopeAll(true);
+  };
+  dd.appendChild(allOpt);
+  dd.appendChild(document.createElement('div')).className='ws-divider';
   for (const p of profiles) {
     const opt = document.createElement('div');
-    opt.className = 'profile-opt' + (p.name === active ? ' active' : '');
+    opt.className = 'profile-opt' + (!_showAllProfiles && p.name === active ? ' active' : '');
     const meta = [];
     if (p.model) meta.push(p.model.split('/').pop());
     if (p.skill_count) meta.push(t('profile_skill_count', p.skill_count));
     const gwDot = `<span class="profile-opt-badge ${p.gateway_running ? 'running' : 'stopped'}"></span>`;
-    const checkmark = p.name === active ? ' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--link)" stroke-width="3" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>' : '';
+    const checkmark = !_showAllProfiles && p.name === active ? ' <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--link)" stroke-width="3" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>' : '';
     const defaultBadge = p.is_default ? ` <span style="opacity:.5;font-weight:400">${esc(t('profile_default_label'))}</span>` : '';
     opt.innerHTML = `<div class="profile-opt-name">${gwDot}${esc(p.name)}${defaultBadge}${checkmark}</div>` +
       (meta.length ? `<div class="profile-opt-meta">${esc(meta.join(' \u00b7 '))}</div>` : '');
     opt.onclick = async () => {
       closeProfileDropdown();
+      if (_showAllProfiles && p.name === active) {
+        if(typeof setProfileScopeAll==='function') await setProfileScopeAll(false);
+        return;
+      }
       if (p.name === active) return;
       await switchToProfile(p.name);
     };
@@ -4693,7 +4707,8 @@ function _profileChips(){
 }
 
 function _setProfileChipLabel(name){
-  document.querySelectorAll('[data-profile-chip-label]').forEach(el=>{el.textContent=name||'default';});
+  const label=(typeof profileChipDisplayLabel==='function'&&!name)?profileChipDisplayLabel():(name||'default');
+  document.querySelectorAll('[data-profile-chip-label], #profileChipLabel').forEach(el=>{el.textContent=label;});
 }
 
 function _setProfileChipActive(active){
@@ -4744,6 +4759,7 @@ async function switchToProfile(name) {
   // Show spinner on the profile chip immediately so the user gets visual
   // feedback while the async switch is in progress.
   const _prevProfileName = S.activeProfile || 'default';
+  if(typeof setProfileScopeAll==='function') setProfileScopeAll(false,{refresh:false});
   _setProfileChipSwitching(true);
   // Optimistic name update — shows the target name right away
   _setProfileChipLabel(name);
@@ -4810,8 +4826,6 @@ async function switchToProfile(name) {
     }
 
     // ── Session ────────────────────────────────────────────────────────────
-    _showAllProfiles = false;
-
     S.session=null;
     S.messages=[];
     S.toolCalls=[];
